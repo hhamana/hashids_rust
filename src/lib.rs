@@ -189,7 +189,7 @@ impl HashIds {
     for matcher in regex2.find_iter(&hex.to_string()) {
       let mut num = String::new();
       num.push('1');
-      num.push_str(&hex[matcher.0..matcher.1]);
+      num.push_str(&hex[matcher.range()]);
       let v: i64 = i64::from_str_radix(&num.to_string(), 16).unwrap();
       numbers.push(v);
     }
@@ -258,7 +258,7 @@ impl HashIds {
     regexp2.push(']');
 
     let re2 = Regex::new(&regexp2[..]).unwrap();
-    hash_breakdown = re2.replace_all(&hash_breakdown[..], " ");
+    hash_breakdown = re2.replace_all(&hash_breakdown, " ").to_string();
 
     let split2: Vec<&str> = hash_breakdown[..].split_whitespace().collect();
 

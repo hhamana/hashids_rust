@@ -13,15 +13,31 @@ const MIN_ALPHABET_LENGTH: usize = 16;
 pub enum HashIdsError { InvalidAlphabetLength }
 
 pub struct HashIds {
-  salt: String,
+  salt: HashidSalt,
   pub alphabet: String,
   separators: String,
   min_hash_length: usize,
   guards: String 
 }
 
+// The use of a special struct to hold the str makes the API intent clearer. 
+// It also doesn't need to be String, a &str is enough, as the salt is likely to be hardcoded anyway.
+pub struct HashidSalt(String);
+
+impl From<&str> for HashidSalt {
+  fn from(s: &str) -> HashidSalt {
+    HashidSalt(s.to_string())
+  }
+}
+
+impl From<String> for HashidSalt {
+  fn from(s: String) -> HashidSalt {
+    HashidSalt(s)
+  }
+}
+
 impl HashIds {
-  pub fn new(salt: String, min_hash_length: usize, alphabet: String) -> Result<HashIds, HashIdsError>  {
+  pub fn new(salt: HashidSalt, min_hash_length: usize, alphabet: String) -> Result<HashIds, HashIdsError>  {
     let min_length = HashIds::get_min_hash_length(min_hash_length);
     let unique_alphabet = HashIds::get_unique_alphabet(alphabet);
 
@@ -30,7 +46,7 @@ impl HashIds {
     }
 
     let (t_separators, mut t_alphabet) = HashIds::get_separators(unique_alphabet);
-    let mut shuffled_separators = HashIds::hashids_shuffle(t_separators.clone(), salt.clone());
+    let mut shuffled_separators = HashIds::hashids_shuffle(t_separators.clone(), &salt);
 
     if HashIds::need_manipulate(shuffled_separators.len(), t_alphabet.len()) == true {
       let mut seps_len =  ((t_alphabet.len() as f32) / SEPARTOR_DIV) as usize;
@@ -48,7 +64,7 @@ impl HashIds {
       }
     }
 
-    let mut shuffled_alphabet = HashIds::hashids_shuffle(t_alphabet.clone(), salt.clone());
+    let mut shuffled_alphabet = HashIds::hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&salt.0[..]));
     let guard_count = (shuffled_alphabet.len() as f32 / GUARD_DIV as f32).ceil() as usize;
 
     let t_guards;
@@ -70,14 +86,13 @@ impl HashIds {
     })
   }
 
-  pub fn new_with_salt_and_min_length(salt: String, min_hash_length: usize) -> Result<HashIds, HashIdsError> {
+  pub fn new_with_salt_and_min_length(salt: HashidSalt, min_hash_length: usize) -> Result<HashIds, HashIdsError> {
     HashIds::new(salt, min_hash_length, DEFAULT_ALPHABET.to_string())
   }
 
-  pub fn new_with_salt(salt: String) -> Result<HashIds, HashIdsError> {
+  pub fn new_with_salt(salt: HashidSalt) -> Result<HashIds, HashIdsError> {
     HashIds::new_with_salt_and_min_length(salt, 0)
   }
-
 
   fn need_manipulate(slen: usize, alen: usize) -> bool {
     if slen <= 0 || (((alen/slen) as f32)> SEPARTOR_DIV) {
@@ -99,13 +114,14 @@ impl HashIds {
     HashIds::get_non_duplicated_string(DEFAULT_SEPARATORS.to_string(), alphabet)
   }
 
-  fn hashids_shuffle(alphabet: String, salt: String) -> String {
-    if salt.len() <= 0 {
+  fn hashids_shuffle(alphabet: String, salt: &HashidSalt) -> String {
+    
+    let salt_len = salt.0.len();
+    if salt_len <= 0 {
       return alphabet;
     }
 
-    let salt_len = salt.len();
-    let arr = salt.as_bytes();
+    let arr = salt.0.as_bytes();
     let len = alphabet.len();
     let mut bytes = alphabet.into_bytes();
     let mut shuffle = &mut bytes[..];
@@ -270,11 +286,11 @@ impl HashIds {
       let sub_hash = s.to_string();
       let mut buffer = String::new();
       buffer.push_str(&lottery[..]);
-      buffer.push_str(&self.salt[..]);
+      buffer.push_str(&self.salt.0[..]);
       buffer.push_str(&alphabet.clone()[..]);
 
       let alpha_len = alphabet.len();
-      alphabet = HashIds::hashids_shuffle(alphabet, buffer[0..alpha_len].to_string());
+      alphabet = HashIds::hashids_shuffle(alphabet, &HashidSalt::from(&buffer[0..alpha_len]));
       ret.push(HashIds::unhash(sub_hash, alphabet.clone()));
     }
 
@@ -359,9 +375,9 @@ impl HashIds {
     let last_len = count - 100;
     for number in numbers.iter() {
       let mut buffer = ret.clone();
-      buffer.push_str(&self.salt[..]);
+      buffer.push_str(&self.salt.0[..]);
       buffer.push_str(&t_alphabet[..]);
-      t_alphabet = HashIds::hashids_shuffle(t_alphabet.clone(), buffer[0..t_alphabet.len()].to_string());
+      t_alphabet = HashIds::hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&buffer[0..t_alphabet.len()]));
       let last = HashIds::hash(*number, t_alphabet.clone());
 
       ret_str.push_str(&last[..]);
@@ -389,7 +405,7 @@ impl HashIds {
 
     let half_len = t_alphabet.len() / 2;
     while ret_str.len() < self.min_hash_length {
-      t_alphabet = HashIds::hashids_shuffle(t_alphabet.clone(), t_alphabet.clone());
+      t_alphabet = HashIds::hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(t_alphabet));
       let mut t_ret = "".to_string();
       t_ret.push_str(&t_alphabet[half_len..]);
       t_ret.push_str(&ret_str[..]);

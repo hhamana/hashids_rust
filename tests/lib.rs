@@ -1,10 +1,10 @@
 extern crate hashids;
 
-use hashids::HashIds;
+use hashids::{HashIds, HashidSalt};
 
 #[test]
 fn it_works_1() {
-  let ids_some = HashIds::new_with_salt("this is my salt".to_string());
+  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
   let ids = match ids_some {
     Ok(v) => { v }
     Err(_) => {
@@ -22,7 +22,7 @@ fn it_works_1() {
 
 #[test]
 fn it_works_2() {
-  let ids_some = HashIds::new_with_salt("this is my salt".to_string());
+  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
   let ids = match ids_some {
     Ok(v) => { v }
     Err(_) => {
@@ -34,7 +34,7 @@ fn it_works_2() {
   let numbers: Vec<i64> = vec![12345];
   let encode = ids.encode(&numbers);
 
-  let ids_some2 = HashIds::new_with_salt("this is my pepper".to_string());
+  let ids_some2 = HashIds::new_with_salt(HashidSalt::from("this is my pepper"));
   let ids2 = match ids_some2 {
     Ok(v) => { v }
     Err(_) => {
@@ -50,7 +50,7 @@ fn it_works_2() {
 
 #[test]
 fn it_works_3() {
-  let ids_some = HashIds::new_with_salt("this is my salt".to_string());
+  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
   let ids = match ids_some {
     Ok(v) => { v }
     Err(_) => {
@@ -67,7 +67,7 @@ fn it_works_3() {
 
 #[test]
 fn it_works_4() {
-  let ids_some = HashIds::new_with_salt_and_min_length("this is my salt".to_string(), 8);
+  let ids_some = HashIds::new_with_salt_and_min_length(HashidSalt::from("this is my salt"), 8);
   let ids = match ids_some {
     Ok(v) => { v }
     Err(_) => {
@@ -84,7 +84,7 @@ fn it_works_4() {
 
 #[test]
 fn it_works_5() {
-  let ids_some = HashIds::new("this is my salt".to_string(), 0, "0123456789abcdef".to_string());
+  let ids_some = HashIds::new(HashidSalt::from("this is my salt"), 0,  "0123456789abcdef".to_string());
   let ids = match ids_some {
     Ok(v) => { v }
     Err(_) => {
@@ -101,7 +101,7 @@ fn it_works_5() {
 
 #[test]
 fn it_works_6() {
-  let ids_some = HashIds::new_with_salt("this is my salt".to_string());
+  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
   let ids = match ids_some {
     Ok(v) => { v }
     Err(_) => {
@@ -118,7 +118,7 @@ fn it_works_6() {
 
 #[test]
 fn it_works_7() {
-  let ids_some = HashIds::new_with_salt("this is my salt".to_string());
+  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
   let ids = match ids_some {
     Ok(v) => { v }
     Err(_) => {
@@ -135,7 +135,7 @@ fn it_works_7() {
 
 #[test]
 fn it_works_8() {
-  let ids_some = HashIds::new_with_salt("this is my salt".to_string());
+  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
   let ids = match ids_some {
     Ok(v) => { v }
     Err(_) => {

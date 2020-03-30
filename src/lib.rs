@@ -1,6 +1,5 @@
 #![crate_name = "hashids"]
 
-extern crate regex;
 
 use std::collections::HashMap;
 use regex::Regex;
@@ -233,8 +232,6 @@ impl HashIds {
   }
 
   fn _decode(&self, hash: String) -> Vec<i64> {
-    use regex::Regex;
-
     let mut regexp = String::new();
     regexp.push('[');
     regexp.push_str(&self.guards[..]);

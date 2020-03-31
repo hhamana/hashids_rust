@@ -1,78 +1,89 @@
 extern crate hashids;
 
-use hashids::{HashIds, HashidSalt};
+use hashids::{HashIds, HashidSalt, HashIdsError};
 
 #[test]
-fn it_works_1() {
-  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
-  let ids = match ids_some {
+fn single_usize_from_single_salt() {
+  let ids = match HashIds::new_with_salt(HashidSalt::from("this is my salt")){
     Ok(v) => { v }
-    Err(_) => {
-      println!("error");
-      return;
+    Err(e) => {
+      panic!("Couldn't create ids. Error: {:?}", e);
     }
   };
 
   let numbers: Vec<i64> = vec![12345];
   let encode = ids.encode(&numbers);
+  assert_eq!(encode, "NkK9");
   let longs = ids.decode(encode.clone());
 
-  assert_eq!(numbers, longs);
+  assert_eq!(longs, vec![12345]);
 }
 
 #[test]
-fn it_works_2() {
-  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
-  let ids = match ids_some {
+fn decoding_from_different_salt_gives_empty_vec() {
+  // I don't agree with this API design. It should be an error, not an null
+  let ids = match HashIds::new_with_salt(HashidSalt::from("this is my salt")) {
     Ok(v) => { v }
-    Err(_) => {
-      println!("error");
-      return;
+    Err(e) => {
+      panic!("Couldn't create ids. Error: {:?}", e);
     }
   };
 
   let numbers: Vec<i64> = vec![12345];
   let encode = ids.encode(&numbers);
-
-  let ids_some2 = HashIds::new_with_salt(HashidSalt::from("this is my pepper"));
-  let ids2 = match ids_some2 {
+  assert_eq!(encode, "NkK9");
+  
+  let ids2 = match HashIds::new_with_salt(HashidSalt::from("this is my pepper")) {
     Ok(v) => { v }
-    Err(_) => {
-      println!("error");
-      return;
+    Err(e) => {
+      panic!("Couldn't create ids2. Error: {:?}", e);
     }
   };
-
-  let longs = ids2.decode(encode.clone());
-
-  assert_eq!(longs.len(), 0);
+  
+  let longs = ids2.decode(encode);
+  
+  assert_eq!(longs, vec![]);
 }
 
 #[test]
-fn it_works_3() {
-  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
-  let ids = match ids_some {
+fn multiple_integers_to_single_hash() {
+  // I don't know what this could even be used for. But my lack of understanding should not remove a feature.
+  let ids = match HashIds::new_with_salt(HashidSalt::from("this is my salt")) {
     Ok(v) => { v }
-    Err(_) => {
-      println!("error");
-      return;
+    Err(e) => {
+      panic!("Couldn't create ids. Error: {:?}", e);
+    }
+  };
+  
+  let numbers: Vec<i64> = vec![683, 94108, 123, 5];
+  let encode = ids.encode(&numbers);
+  
+  assert_eq!(encode, "aBMswoO2UB3Sj");
+}
+
+#[test]
+#[should_panic]
+fn negative_integers_panics() {
+  // This should be made into a proper error. Poor API design again.
+  let ids = match HashIds::new_with_salt(HashidSalt::from("this is my salt")) {
+    Ok(v) => { v }
+    Err(e) => {
+      panic!("Couldn't create ids. Error: {:?}", e);
     }
   };
 
-  let numbers: Vec<i64> = vec![683, 94108, 123, 5];
+  let numbers: Vec<i64> = vec![683, -94108, 123, 5];
   let encode = ids.encode(&numbers);
 
   assert_eq!(encode, "aBMswoO2UB3Sj");
 }
 
 #[test]
-fn it_works_4() {
-  let ids_some = HashIds::new_with_salt_and_min_length(HashidSalt::from("this is my salt"), 8);
-  let ids = match ids_some {
+fn with_custom_length() {
+  let ids = match HashIds::new_with_salt_and_min_length(HashidSalt::from("this is my salt"), 8) {
     Ok(v) => { v }
-    Err(_) => {
-      println!("error");
-      return;
+    Err(e) => {
+      panic!("Couldn't create ids. Error: {:?}", e);
     }
   };
 
@@ -83,30 +94,37 @@ fn it_works_4() {
 }
 
 #[test]
-fn it_works_5() {
-  let ids_some = HashIds::new(HashidSalt::from("this is my salt"), 0,  "0123456789abcdef".to_string());
-  let ids = match ids_some {
+fn raw_new() {
+  let ids = match HashIds::new(HashidSalt::from("this is my salt"), 0,  "0123456789abcdef".to_string()) {
     Ok(v) => { v }
-    Err(_) => {
-      println!("error");
-      return;
+    Err(e) => {
+      panic!("Couldn't create ids. Error: {:?}", e)
     }
   };
-
+  
   let numbers: Vec<i64> = vec![1234567];
   let encode = ids.encode(&numbers);
-
+  
   assert_eq!(encode, "b332db5");
 }
 
+
 #[test]
-fn it_works_6() {
+fn invalid_alphabet_fails() {
+  // The alphabet is invalid because it is under 16 chars long (as defined by const MIN_ALPHABET_LENGTH)
+  match HashIds::new(HashidSalt::from("this is my salt"), 0,  "abcdefghijklm".to_string()) {
+    Ok(v) => panic!("Invalid alphabet was accepted {}", v.alphabet),
+    Err(e) => assert_eq!(e, HashIdsError::InvalidAlphabetLength)
+  }
+}
+
+#[test]
+fn same_integers() {
   let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
   let ids = match ids_some {
     Ok(v) => { v }
-    Err(_) => {
-      println!("error");
-      return;
+    Err(e) => {
+      panic!("Couldn't create ids. Error: {:?}", e);
     }
   };
 
@@ -117,13 +135,11 @@ fn it_works_6() {
 }
 
 #[test]
-fn it_works_7() {
-  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
-  let ids = match ids_some {
+fn encode_int_series() {
+  let ids = match HashIds::new_with_salt(HashidSalt::from("this is my salt")) {
     Ok(v) => { v }
-    Err(_) => {
-      println!("error");
-      return;
+    Err(e) => {
+      panic!("Couldn't create ids. Error: {:?}", e);
     }
   };
 
@@ -134,13 +150,11 @@ fn it_works_7() {
 }
 
 #[test]
-fn it_works_8() {
-  let ids_some = HashIds::new_with_salt(HashidSalt::from("this is my salt"));
-  let ids = match ids_some {
+fn encode_successive_ints() {
+  let ids = match  HashIds::new_with_salt(HashidSalt::from("this is my salt")) {
     Ok(v) => { v }
-    Err(_) => {
-      println!("error");
-      return;
+    Err(e) => {
+      panic!("Couldn't create ids. Error: {:?}", e);
     }
   };
 

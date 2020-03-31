@@ -10,15 +10,9 @@ const SEPARTOR_DIV: f32 = 3.5;
 const GUARD_DIV: u32 = 12;
 const MIN_ALPHABET_LENGTH: usize = 16;
 
+#[derive(Debug, PartialEq)]
 pub enum HashIdsError { InvalidAlphabetLength }
 
-pub struct HashIds {
-  salt: HashidSalt,
-  pub alphabet: String,
-  separators: String,
-  min_hash_length: usize,
-  guards: String 
-}
 
 // The use of a special struct to hold the str makes the API intent clearer. 
 // It also doesn't need to be String, a &str is enough, as the salt is likely to be hardcoded anyway.
@@ -36,16 +30,23 @@ impl From<String> for HashidSalt {
   }
 }
 
+pub struct HashIds {
+  salt: HashidSalt,
+  pub alphabet: String,
+  separators: String,
+  min_hash_length: usize,
+  guards: String 
+}
+
 impl HashIds {
-  pub fn new(salt: HashidSalt, min_hash_length: usize, alphabet: String) -> Result<HashIds, HashIdsError>  {
-    let min_length = HashIds::get_min_hash_length(min_hash_length);
+  pub fn new(salt: HashidSalt, min_length: usize, alphabet: String) -> Result<HashIds, HashIdsError>  {
     let unique_alphabet = HashIds::get_unique_alphabet(alphabet);
 
     if unique_alphabet.len() < MIN_ALPHABET_LENGTH {
       return Err(HashIdsError::InvalidAlphabetLength);
     }
 
-    let (t_separators, mut t_alphabet) = HashIds::get_separators(unique_alphabet);
+    let (t_separators, mut t_alphabet) = HashIds::get_non_duplicated_string(DEFAULT_SEPARATORS.to_string(), unique_alphabet);
     let mut shuffled_separators = HashIds::hashids_shuffle(t_separators.clone(), &salt);
 
     if HashIds::need_manipulate(shuffled_separators.len(), t_alphabet.len()) == true {
@@ -102,18 +103,6 @@ impl HashIds {
     false
   }
 
-  fn get_min_hash_length(length: usize) -> usize {
-    if length > 0 {
-      return length;
-    } else {
-      return 0;
-    }
-  }
-
-  fn get_separators(alphabet: String) -> (String, String) {
-    HashIds::get_non_duplicated_string(DEFAULT_SEPARATORS.to_string(), alphabet)
-  }
-
   fn hashids_shuffle(alphabet: String, salt: &HashidSalt) -> String {
     
     let salt_len = salt.0.len();
@@ -124,7 +113,7 @@ impl HashIds {
     let arr = salt.0.as_bytes();
     let len = alphabet.len();
     let mut bytes = alphabet.into_bytes();
-    let mut shuffle = &mut bytes[..];
+    let shuffle = &mut bytes[..];
 
     let mut i: usize = len-1;
     let mut v: usize = 0;

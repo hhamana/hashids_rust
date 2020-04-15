@@ -6,12 +6,12 @@ use regex::Regex;
 
 const DEFAULT_ALPHABET: &'static str =  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
 const DEFAULT_SEPARATORS: &'static str = "cfhistuCFHISTU";
-const SEPARTOR_DIV: f32 = 3.5;
+const SEPARATOR_DIV: f32 = 3.5;
 const GUARD_DIV: u32 = 12;
 const MIN_ALPHABET_LENGTH: usize = 16;
 
 #[derive(Debug, PartialEq)]
-pub enum HashIdsError { InvalidAlphabetLength }
+pub enum HashIdBuilderError { InvalidAlphabetLength }
 
 
 // The use of a special struct to hold the str makes the API intent clearer. 
@@ -30,7 +30,7 @@ impl From<String> for HashidSalt {
   }
 }
 
-pub struct HashIds {
+pub struct HashIdBuilder {
   salt: HashidSalt,
   pub alphabet: String,
   separators: String,
@@ -38,19 +38,20 @@ pub struct HashIds {
   guards: String 
 }
 
-impl HashIds {
-  pub fn new(salt: HashidSalt, min_length: usize, alphabet: String) -> Result<HashIds, HashIdsError>  {
-    let unique_alphabet = HashIds::get_unique_alphabet(alphabet);
+pub struct HashID {
+  hash: String,
+  integer: i64
+}
 
-    if unique_alphabet.len() < MIN_ALPHABET_LENGTH {
-      return Err(HashIdsError::InvalidAlphabetLength);
-    }
+impl HashIdBuilder {
+  pub fn new(salt: HashidSalt, min_length: usize, alphabet: String) -> Result<HashIdBuilder, HashIdBuilderError>  {
+    let unique_alphabet = HashIdBuilder::get_unique_alphabet(alphabet)?;
 
-    let (t_separators, mut t_alphabet) = HashIds::get_non_duplicated_string(DEFAULT_SEPARATORS.to_string(), unique_alphabet);
-    let mut shuffled_separators = HashIds::hashids_shuffle(t_separators.clone(), &salt);
+    let (t_separators, mut t_alphabet) = HashIdBuilder::get_non_duplicated_string(DEFAULT_SEPARATORS.to_string(), unique_alphabet);
+    let mut shuffled_separators = HashIdBuilder::hashids_shuffle(t_separators.clone(), &salt);
 
-    if HashIds::need_manipulate(shuffled_separators.len(), t_alphabet.len()) == true {
-      let mut seps_len =  ((t_alphabet.len() as f32) / SEPARTOR_DIV) as usize;
+    if HashIdBuilder::need_manipulate(shuffled_separators.len(), t_alphabet.len()) {
+      let mut seps_len =  ((t_alphabet.len() as f32) / SEPARATOR_DIV) as usize;
       if seps_len == 1 {
         seps_len += 1;
       }
@@ -65,7 +66,7 @@ impl HashIds {
       }
     }
 
-    let mut shuffled_alphabet = HashIds::hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&salt.0[..]));
+    let mut shuffled_alphabet = HashIdBuilder::hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&salt.0[..]));
     let guard_count = (shuffled_alphabet.len() as f32 / GUARD_DIV as f32).ceil() as usize;
 
     let t_guards;
@@ -78,7 +79,7 @@ impl HashIds {
       shuffled_alphabet = shuffled_alphabet[guard_count..].to_string();
     }
 
-    Ok(HashIds {
+    Ok(HashIdBuilder {
       salt: salt,
       min_hash_length: min_length,
       guards: t_guards,
@@ -87,16 +88,16 @@ impl HashIds {
     })
   }
 
-  pub fn new_with_salt_and_min_length(salt: HashidSalt, min_hash_length: usize) -> Result<HashIds, HashIdsError> {
-    HashIds::new(salt, min_hash_length, DEFAULT_ALPHABET.to_string())
+  pub fn new_with_salt_and_min_length(salt: HashidSalt, min_hash_length: usize) -> Result<HashIdBuilder, HashIdBuilderError> {
+    HashIdBuilder::new(salt, min_hash_length, DEFAULT_ALPHABET.to_string())
   }
 
-  pub fn new_with_salt(salt: HashidSalt) -> Result<HashIds, HashIdsError> {
-    HashIds::new_with_salt_and_min_length(salt, 0)
+  pub fn new_with_salt(salt: HashidSalt) -> Result<HashIdBuilder, HashIdBuilderError> {
+    HashIdBuilder::new_with_salt_and_min_length(salt, 0)
   }
 
   fn need_manipulate(slen: usize, alen: usize) -> bool {
-    if slen <= 0 || (((alen/slen) as f32)> SEPARTOR_DIV) {
+    if slen <= 0 || (((alen/slen) as f32)> SEPARATOR_DIV) {
       return true;
     }
 
@@ -169,7 +170,7 @@ impl HashIds {
     (modified_separators, modified_alphabet)
   }
 
-  fn get_unique_alphabet(alphabet: String) -> String {
+  fn get_unique_alphabet(alphabet: String) -> Result<String, HashIdBuilderError> {
     let mut unique_alphabet: String = String::new();
     let mut check_map = HashMap::new();
     
@@ -180,7 +181,11 @@ impl HashIds {
       }
     }
 
-    unique_alphabet
+    if unique_alphabet.len() < MIN_ALPHABET_LENGTH {
+      return Err(HashIdBuilderError::InvalidAlphabetLength);
+    };
+    
+    Ok(unique_alphabet)
   }
 
   pub fn encode_hex(&self, hex: String) -> String {
@@ -279,8 +284,8 @@ impl HashIds {
       buffer.push_str(&alphabet.clone()[..]);
 
       let alpha_len = alphabet.len();
-      alphabet = HashIds::hashids_shuffle(alphabet, &HashidSalt::from(&buffer[0..alpha_len]));
-      ret.push(HashIds::unhash(sub_hash, alphabet.clone()));
+      alphabet = HashIdBuilder::hashids_shuffle(alphabet, &HashidSalt::from(&buffer[0..alpha_len]));
+      ret.push(HashIdBuilder::unhash(sub_hash, alphabet.clone()));
     }
 
     let check_hash = self._encode(&ret);
@@ -317,7 +322,7 @@ impl HashIds {
       }
 
       let v = input_slice[i] as usize;
-      let pos = HashIds::index_of(alpha_slice, v as u8);
+      let pos = HashIdBuilder::index_of(alpha_slice, v as u8);
       let pow_size = (len - i - 1) as u32;
       number += (pos * alpha_len.pow(pow_size)) as i64;
       i += 1;
@@ -366,8 +371,8 @@ impl HashIds {
       let mut buffer = ret.clone();
       buffer.push_str(&self.salt.0[..]);
       buffer.push_str(&t_alphabet[..]);
-      t_alphabet = HashIds::hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&buffer[0..t_alphabet.len()]));
-      let last = HashIds::hash(*number, t_alphabet.clone());
+      t_alphabet = HashIdBuilder::hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&buffer[0..t_alphabet.len()]));
+      let last = HashIdBuilder::hash(*number, t_alphabet.clone());
 
       ret_str.push_str(&last[..]);
 
@@ -394,7 +399,7 @@ impl HashIds {
 
     let half_len = t_alphabet.len() / 2;
     while ret_str.len() < self.min_hash_length {
-      t_alphabet = HashIds::hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(t_alphabet));
+      t_alphabet = HashIdBuilder::hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(t_alphabet));
       let mut t_ret = "".to_string();
       t_ret.push_str(&t_alphabet[half_len..]);
       t_ret.push_str(&ret_str[..]);

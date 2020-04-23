@@ -24,28 +24,26 @@ All (long) integers need to be greater than or equal to zero.
 
 #### Import the package
 ```rust
-extern crate hashids;
 use hashids::HashIds;
 ```
+#### Create the encoder/decoder `HashidCodec`
 
-see tests/lib.rs
+The builder allows you to customize the encoding process: salt, alphabet and length.
+You must pass a unique salt value so your hashes differ from everyone else's. I use "this is my salt" as an example.
+
+You can pass it through code, but it is recommended to pass it through environnment variable.
+If it's not set through code, it will look for the `HASHID_SALT` environnment variable, 
+or send a Error::MissingSalt
+
 
 #### Encrypting one number
 
-You can pass a unique salt value so your hashes differ from everyone else's. I use "this is my salt" as an example.
 
 ```rust
-let ids_some = HashIds::new_with_salt("this is my salt".to_string());
-let ids = match ids_some {
-  Ok(v) => { v }
-  Err(e) => {
-    println!("error");
-    return;
-  }
-};
+let id_builder = HashIdBuilder::new().with_salt("this is my salt").ok().unwrap();
 
 let numbers: Vec<i64> = vec![12345];
-let encode = ids.encode(&numbers);
+let hash = id_builder.encode(&numbers);
 ```
 
 `hash` is now going to be:
@@ -54,16 +52,13 @@ let encode = ids.encode(&numbers);
 
 #### Decrypting
 
-Notice during decoding, same salt value is used:
+Notice during decoding, the same builder is used, which will use the same salt.
 
 ```rust
-let longs = ids.decode("NkK9".to_string());
-for s in longs.iter() {
-  println!("longs: {}", s);
-}
+let longs = id_builder.decode("NkK9".to_string());
 ```
 
-`numbers` is now going to be:
+`longs` is now going to be:
 
 	[ 12345 ]
 
@@ -72,16 +67,9 @@ for s in longs.iter() {
 Decryption will not work if salt is changed:
 
 ```rust
-let ids_some = HashIds::new_with_salt("this is my salt".to_string());
-let ids = match ids_some {
-  Ok(v) => { v }
-  Err(e) => {
-    println!("error");
-    return;
-  }
-};
+let wrong_id_builder = HashIdBuilder::new_with_salt(HashidSalt::from("not the same salt")).unwrap();
 
-let numbers = ids.decode("NkK9");
+let numbers = wrong_id_builder.decode("NkK9");
 ```
 
 `numbers` is now going to be:
@@ -90,43 +78,26 @@ let numbers = ids.decode("NkK9");
 
 #### Encrypting several numbers
 
-```Rust
-let ids_some = HashIds::new_with_salt("this is my salt".to_string());
-let ids = match ids_some {
-  Ok(v) => { v }
-  Err(e) => {
-    println!("error");
-    return;
-  }
-};
+```rust
+let id_builder = HashIdBuilder::new_with_salt(HashidSalt::from("this is my salt")).unwrap();
 
 let numbers: Vec<i64> = vec![683, 94108, 123, 5];
-let encode = ids.encode(&numbers);
+let hash = ids.encode(&numbers);
 ```
 
 `hash` is now going to be:
 
 	aBMswoO2UB3Sj
 
-#### Decrypting is done the same way
+Decrypting is done the same way
 
 ```rust
-let ids_some = HashIds::new_with_salt("this is my salt".to_string());
-let ids = match ids_some {
-  Ok(v) => { v }
-  Err(e) => {
-    println!("error");
-    return;
-  }
-};
+let id_builder = HashIdBuilder::new_with_salt(HashidSalt::from("this is my salt")).unwrap();
 
-let longs = ids.decode("NkK9".to_string());
-for s in longs.iter() {
-  println!("longs: {}", s);
-}
+let longs = ids.decode("aBMswoO2UB3Sj".to_string());
 ```
 
-`numbers` is now going to be:
+`longs` is now going to be:
 
 	[ 683, 94108, 123, 5 ]
 
@@ -135,17 +106,10 @@ for s in longs.iter() {
 Here we encode integer 1, and set the minimum hash length to **8** (by default it's **0** -- meaning hashes will be the shortest possible length).
 
 ```rust
-let ids_some = HashIds::new_with_salt_and_min_length("this is my salt".to_string(), 8);
-let ids = match ids_some {
-  Ok(v) => { v }
-  Err(e) => {
-    println!("error");
-    return;
-  }
-};
+let id_builder = HashIdBuilder::new_with_salt_and_min_length(HashidSalt::from("this is my salt"), 8).unwrap();
 
 let numbers : Vec<i64> = vec![1];
-let encode = ids.encode(&numbers);
+let hash = ids.encode(&numbers);
 ```
 
 `hash` is now going to be:

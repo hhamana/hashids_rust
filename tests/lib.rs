@@ -1,15 +1,10 @@
 extern crate hashids;
 
-use hashids::{HashIdBuilder, HashidSalt, HashIdBuilderError};
+use hashids::{HashidBuilder, HashidSalt, Error};
 
 #[test]
 fn single_usize_from_single_salt() {
-  let ids = match HashIdBuilder::new_with_salt(HashidSalt::from("this is my salt")){
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids. Error: {:?}", e);
-    }
-  };
+  let ids = HashidBuilder::new().with_hashid_salt(HashidSalt::from("this is my salt")).ok().unwrap();
 
   let numbers: Vec<i64> = vec![12345];
   let encode = ids.encode(&numbers);
@@ -22,23 +17,13 @@ fn single_usize_from_single_salt() {
 #[test]
 fn decoding_from_different_salt_gives_empty_vec() {
   // I don't agree with this API design. It should be an error, not an null
-  let ids = match HashIdBuilder::new_with_salt(HashidSalt::from("this is my salt")) {
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids. Error: {:?}", e);
-    }
-  };
+  let ids = HashidBuilder::new().with_string_salt("this is my salt".to_string()).ok().unwrap();
 
   let numbers: Vec<i64> = vec![12345];
   let encode = ids.encode(&numbers);
   assert_eq!(encode, "NkK9");
   
-  let ids2 = match HashIdBuilder::new_with_salt(HashidSalt::from("this is my pepper")) {
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids2. Error: {:?}", e);
-    }
-  };
+  let ids2 = HashidBuilder::new().with_salt("this is my pepper").ok().unwrap();
   
   let longs = ids2.decode(encode);
   
@@ -48,12 +33,7 @@ fn decoding_from_different_salt_gives_empty_vec() {
 #[test]
 fn multiple_integers_to_single_hash() {
   // I don't know what this could even be used for. But my lack of understanding should not remove a feature.
-  let ids = match HashIdBuilder::new_with_salt(HashidSalt::from("this is my salt")) {
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids. Error: {:?}", e);
-    }
-  };
+  let ids = HashidBuilder::new().with_salt("this is my salt").ok().unwrap();
   
   let numbers: Vec<i64> = vec![683, 94108, 123, 5];
   let encode = ids.encode(&numbers);
@@ -65,12 +45,7 @@ fn multiple_integers_to_single_hash() {
 #[should_panic]
 fn negative_integers_panics() {
   // This should be made into a proper error. Poor API design again.
-  let ids = match HashIdBuilder::new_with_salt(HashidSalt::from("this is my salt")) {
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids. Error: {:?}", e);
-    }
-  };
+  let ids = HashidBuilder::new().with_salt("this is my salt").ok().unwrap();
 
   let numbers: Vec<i64> = vec![683, -94108, 123, 5];
   let encode = ids.encode(&numbers);
@@ -80,13 +55,10 @@ fn negative_integers_panics() {
 
 #[test]
 fn with_custom_length() {
-  let ids = match HashIdBuilder::new_with_salt_and_min_length(HashidSalt::from("this is my salt"), 8) {
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids. Error: {:?}", e);
-    }
-  };
-
+  let ids = HashidBuilder::new()
+                          .with_salt("this is my salt")
+                          .with_length(8)
+                          .ok().unwrap();
   let numbers: Vec<i64> = vec![1];
   let encode = ids.encode(&numbers);
 
@@ -94,39 +66,59 @@ fn with_custom_length() {
 }
 
 #[test]
-fn raw_new() {
-  let ids = match HashIdBuilder::new(HashidSalt::from("this is my salt"), 0,  "0123456789abcdef".to_string()) {
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids. Error: {:?}", e)
-    }
-  };
+fn with_custom_alphabet() {
+  let ids = HashidBuilder::new()
+                        .with_salt("this is my salt")
+                        .with_alphabet("123456789abscefri".to_string())
+                        .ok().unwrap();
   
   let numbers: Vec<i64> = vec![1234567];
   let encode = ids.encode(&numbers);
   
-  assert_eq!(encode, "b332db5");
+  assert_eq!(encode, "8334e72");
 }
-
-
 #[test]
 fn invalid_alphabet_fails() {
-  // The alphabet is invalid because it is under 16 chars long (as defined by const MIN_ALPHABET_LENGTH)
-  match HashIdBuilder::new(HashidSalt::from("this is my salt"), 0,  "abcdefghijklm".to_string()) {
+  let builder = HashidBuilder::new().with_salt("this is my salt")
+          .with_alphabet("abcdefghijklm".to_string())
+          .ok();
+
+  match builder {
     Ok(v) => panic!("Invalid alphabet was accepted {}", v.alphabet),
-    Err(e) => assert_eq!(e, HashIdBuilderError::InvalidAlphabetLength)
+    Err(e) => assert_eq!(e, Error::InvalidAlphabetLength)
+  }
+}
+
+#[test]
+fn without_salt_error() {
+  std::env::remove_var("HASHID_SALT");
+  match HashidBuilder::new().ok() {
+    Ok(_) => panic!("Created a HashidCodec without salt. A test failure might be due to envvar thread unsafety in Unix, try again in isolation."),
+    Err(err) => assert_eq!(err, Error::MissingSalt)
+  }
+}
+
+#[test]
+fn with_envvar_salt() {
+  std::env::set_var("HASHID_SALT", "organic salt");
+  let the_most_simple_builder = HashidBuilder::new().ok();
+  match the_most_simple_builder {
+    Ok(ids) => {
+      let numbers: Vec<i64> = vec![12345];
+      let encode = ids.encode(&numbers);
+      assert_eq!(encode, "PWbG");
+      let longs = ids.decode(encode.clone());
+    
+      assert_eq!(longs, vec![12345]);
+    },
+
+    Err(err) => panic!("Failed building the encoder from environnent variable. Error: {:?}. A test failure might be due to envvar thread unsafety in Unix, try again in isolation.", err)
   }
 }
 
 #[test]
 fn same_integers() {
-  let ids_some = HashIdBuilder::new_with_salt(HashidSalt::from("this is my salt"));
-  let ids = match ids_some {
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids. Error: {:?}", e);
-    }
-  };
+  let ids = HashidBuilder::new().with_salt("this is my salt").ok().unwrap();
 
   let numbers: Vec<i64> = vec![5, 5, 5, 5];
   let encode = ids.encode(&numbers);
@@ -136,12 +128,7 @@ fn same_integers() {
 
 #[test]
 fn encode_int_series() {
-  let ids = match HashIdBuilder::new_with_salt(HashidSalt::from("this is my salt")) {
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids. Error: {:?}", e);
-    }
-  };
+  let ids = HashidBuilder::new().with_salt("this is my salt").ok().unwrap();
 
   let numbers: Vec<i64> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
   let encode = ids.encode(&numbers);
@@ -151,12 +138,10 @@ fn encode_int_series() {
 
 #[test]
 fn encode_successive_ints() {
-  let ids = match  HashIdBuilder::new_with_salt(HashidSalt::from("this is my salt")) {
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids. Error: {:?}", e);
-    }
-  };
+  let ids = HashidBuilder::new()
+      .with_salt("this is my salt")
+      .with_length(2)
+      .ok().unwrap();
 
   let numbers_1: Vec<i64> = vec![1];
   let encode_1 = ids.encode(&numbers_1);
@@ -178,12 +163,7 @@ fn encode_successive_ints() {
 
 #[test]
 fn decode_successive_ints() {
-  let ids = match  HashIdBuilder::new_with_salt(HashidSalt::from("this is my salt")) {
-    Ok(v) => { v }
-    Err(e) => {
-      panic!("Couldn't create ids. Error: {:?}", e);
-    }
-  };
+  let ids = HashidBuilder::new().with_salt("this is my salt").ok().unwrap();
 
   let numbers_1: Vec<i64> = vec![1];
   let encode_1 = ids.encode(&numbers_1);

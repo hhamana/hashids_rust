@@ -69,13 +69,13 @@ fn with_custom_length() {
 fn with_custom_alphabet() {
   let ids = HashidBuilder::new()
                         .with_salt("this is my salt")
-                        .with_alphabet("123456789abscefri".to_string())
+                        .with_alphabet("123456789aberzxvtcfhuist".to_string())
                         .ok().unwrap();
   
   let numbers: Vec<i64> = vec![1234567];
   let encode = ids.encode(&numbers);
   
-  assert_eq!(encode, "8334e72");
+  assert_eq!(encode, "xez268x");
 }
 #[test]
 fn invalid_alphabet_fails() {

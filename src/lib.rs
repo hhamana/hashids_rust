@@ -3,7 +3,7 @@
 /// Use the builder to configure, then use the codec to encode and decode.
 
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet};
 use regex::Regex;
 
 const ENV_KEY: &'static str =  "HASHID_SALT";
@@ -148,30 +148,35 @@ impl HashidBuilder {
 
     // Get custom alphabet or default otherwise
     let alphabet = if let Some(custom) = self.alphabet { custom } else { DEFAULT_ALPHABET.to_string() };
-    let unique_alphabet = HashidBuilder::get_unique_alphabet(alphabet)?;
-    
+    let unique_alphabet = HashidBuilder::get_unique_alphabet(alphabet);
+    if unique_alphabet.len() < MIN_ALPHABET_LENGTH {
+      return Err(Error::InvalidAlphabetLength);
+    };
     // get custom salt, set from builder function or by environnment
     let salt = if let Some(custom) = self.salt { custom } else { 
       let by_env = std::env::var(ENV_KEY);
-      match  by_env {
+      match by_env {
         Ok(var) => HashidSalt::from(var),
         Err(_) => return Err(Error::MissingSalt)
       }
     };
-
+    
     let min_length = if let Some(custom) = self.min_length { custom } else { DEFAULT_MIN_LENGTH };
-
+    
     let (t_separators, mut t_alphabet) = HashidBuilder::get_non_duplicated_string(DEFAULT_SEPARATORS.to_string(), unique_alphabet);
     let mut shuffled_separators = hashids_shuffle(t_separators.clone(), &salt);
+    let alphabet_len = t_alphabet.len();
+    
+    let shuffled_separators_len = shuffled_separators.len();
 
-    if HashidBuilder::need_manipulate(shuffled_separators.len(), t_alphabet.len()) {
-      let mut seps_len =  ((t_alphabet.len() as f32) / SEPARATOR_DIV) as usize;
+    if shuffled_separators_len <= 0 || ((alphabet_len/shuffled_separators_len) as f32) > SEPARATOR_DIV {
+      let mut seps_len =  ((alphabet_len as f32) / SEPARATOR_DIV) as usize;
       if seps_len == 1 {
-        seps_len += 1;
+        seps_len = 2;
       }
 
-      if seps_len > shuffled_separators.len() {
-        let diff = seps_len - shuffled_separators.len();
+      if seps_len > shuffled_separators_len {
+        let diff = seps_len - shuffled_separators_len;
 
         shuffled_separators.push_str(&t_alphabet[..diff]);
         t_alphabet = t_alphabet[diff..].to_string();
@@ -180,12 +185,13 @@ impl HashidBuilder {
       }
     }
 
-    let mut shuffled_alphabet = hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&salt.0[..]));
-    let guard_count = (shuffled_alphabet.len() as f32 / GUARD_DIV as f32).ceil() as usize;
+    let mut shuffled_alphabet = hashids_shuffle(t_alphabet, &salt);
+
+    let guard_count = (alphabet_len as f32 / GUARD_DIV as f32).ceil() as usize;
 
     let t_guards;
 
-    if shuffled_alphabet.len() < 3 {
+    if alphabet_len < 3 {
       t_guards = shuffled_separators[..guard_count].to_string();
       shuffled_separators = shuffled_separators[guard_count..].to_string();
     } else {
@@ -202,37 +208,21 @@ impl HashidBuilder {
     })
   }
 
-  fn need_manipulate(slen: usize, alen: usize) -> bool {
-    if slen <= 0 || (((alen/slen) as f32)> SEPARATOR_DIV) {
-      return true;
-    }
-
-    false
-  }
-
   fn get_non_duplicated_string(separators: String, alphabet: String) -> (String, String) {
-    let mut check_separator_map = HashMap::new();
-    let mut check_alphabet_map = HashMap::new();
+    let check_separator = string_to_set(&separators);
+    let check_alphabet = string_to_set(&alphabet);
 
     let mut modified_separators = String::new();
     let mut modified_alphabet = String::new();
     
     for c in separators.chars() {
-      check_separator_map.insert(c, 1);
-    }
-
-    for c in alphabet.chars() {
-      check_alphabet_map.insert(c, 1);
-    }
-
-    for c in separators.chars() {
-      if check_alphabet_map.contains_key(&c) {
+      if check_alphabet.contains(&c) {
         modified_separators.push(c);
       }
     }
     
     for c in alphabet.chars() {
-      if !check_separator_map.contains_key(&c) {
+      if !check_separator.contains(&c) {
         modified_alphabet.push(c);
       }
     }
@@ -240,23 +230,18 @@ impl HashidBuilder {
     (modified_separators, modified_alphabet)
   }
 
-  fn get_unique_alphabet(alphabet: String) -> Result<String, Error> {
+  fn get_unique_alphabet(alphabet: String) -> String {
     let mut unique_alphabet: String = String::new();
     let mut check_map = HashSet::new();
     
     for c in alphabet.chars() {
-      // insert into a hashet gives a bool, true if it was actually a new key, false if it was already there.
+      // insert into a hashset gives a bool, true if it was actually inserted, false if it was already there.
       if check_map.insert(c.clone()) {
         // the result is then used to create the alphabet
         unique_alphabet.push(c);
       }
     }
-
-    if unique_alphabet.len() < MIN_ALPHABET_LENGTH {
-      return Err(Error::InvalidAlphabetLength);
-    };
-    
-    Ok(unique_alphabet)
+    unique_alphabet
   }
 }
 
@@ -555,4 +540,13 @@ fn hashids_shuffle(alphabet: String, salt: &HashidSalt) -> String {
   }
 
   shuffled_alphabet
+}
+
+fn string_to_set(string: &String) -> HashSet<char> {
+  let mut set = HashSet::new();
+  for c in string.chars() {
+    set.insert(c.clone());
+  }
+  
+  set
 }

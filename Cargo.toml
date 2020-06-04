@@ -1,8 +1,7 @@
 [package]
-
 name = "hashids"
-version = "1.1.0"
-authors = [ "charsyam <charsyam@gmail.com>" ]
+version = "2.0.0"
+authors = [ "charsyam <charsyam@gmail.com>", "hhamana <hadrien.hamana@gmail.com>" ]
 description = "HashIds Rust Implementation"
 repository = "https://github.com/charsyam/hashids_rust"
 keywords = ["rust", "hashids"]

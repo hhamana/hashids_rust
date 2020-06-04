@@ -1,8 +1,6 @@
 /// Create a hashid
 /// 
 /// Use the builder to configure, then use the codec to encode and decode.
-
-
 use std::collections::{HashSet};
 use regex::Regex;
 
@@ -15,11 +13,16 @@ const GUARD_DIV: u32 = 12;
 const MIN_ALPHABET_LENGTH: usize = 16;
 
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Error { 
   MissingSalt,
   InvalidAlphabetLength,
+  EmptyString,
+  NonHexString,
+  InvalidInputId,
+  EmptyHash,
+  InvalidHash
 }
-
 
 /// Represents the salt to use when encoding/decoding IDs.
 /// 
@@ -245,12 +248,10 @@ impl HashidBuilder {
   }
 }
 
-
-
-/// This struct holds the processing. It can only be created from a HashidBuilder::new().ok();
+/// This struct holds the processing. It can only be created from a `HashidBuilder`;
 pub struct HashidCodec {
   salt: HashidSalt,
-  pub alphabet: String,
+  alphabet: String,
   separators: String,
   min_hash_length: usize,
   guards: String 
@@ -276,66 +277,109 @@ impl Default for HashidCodec {
 }
 
 impl HashidCodec {
-  pub fn encode_hex(&self, hex: String) -> String {
-    let regex1 = Regex::new(r"^[0-9a-fA-F]+$").unwrap();
-    if regex1.is_match(&hex.to_string()) == false {
-      return String::new();
-    }
 
-    let mut numbers: Vec<i64> = Vec::new();
-    let regex2 = Regex::new(r"[\w\W]{1,12}").unwrap();
-    for matcher in regex2.find_iter(&hex.to_string()) {
-      let mut num = String::new();
-      num.push('1');
-      num.push_str(&hex[matcher.range()]);
-      let v: i64 = i64::from_str_radix(&num.to_string(), 16).unwrap();
-      numbers.push(v);
-    }
+  // TODO: investigate if I even need this.
+  // pub fn decode_hex(&self, hash: String) -> String {
+  //   let numbers = self.decode(hash);
+
+  //   // TODO: I get the feeling this is something stupid oveengineered.
+  //   let mut ret = String::new();
+  //   for number in numbers {
+  //     let r = format!("{:x}", number);
+  //     ret.push_str(&r[1..]);
+  //   }
+
+  //   ret
+  // }
+
+  /// Converts an ID to a Hashid String. Accepts any PositiveInteger (u32, u64, i32 and i64 are included), valid from 0 to 9007199254740992. (i64 max)
+  pub fn encode<T: PositiveInteger>(&self, id: T) -> Result<String, Error> {
+    // Validate/Convert Input as a positive i64. 
+    // Error depending on PositiveInteger implementation, but probably a Error::InvalidInputId
+    let as_usize = id.to_usize()?;
+
+    // TODO: make it not needing to be a vec, even internally?
+    let numbers = vec![as_usize];
+    let id = self.encode_vec(&numbers);
+    Ok(id)
+  }
+
+  fn encode_vec(&self, numbers: &Vec<usize>) -> String {
+    let mut number_hash_int  = 0;
     
-    self.encode(&numbers)
-  }
-
-  pub fn decode_hex(&self, hash: String) -> String {
-    let mut ret = String::new();
-    let numbers = self.decode(hash);
-    for number in numbers.iter() {
-      let r = format!("{:x}", number);
-      ret.push_str(&r[1..]);
-    }
-
-    ret
-  }
-
-  pub fn encode(&self, numbers: &Vec<i64>) -> String {
-    if numbers.len() == 0 {
-      return "".to_string();
-    }
+    // magic number
+    let mut count = 100; 
 
     for number in numbers.iter() {
-      if *number > 9007199254740992 {
-        return "".to_string();
+      number_hash_int += number % count;
+      count += 1;
+    }
+
+    let idx = number_hash_int % self.alphabet.len();
+    let ret = self.alphabet[idx..idx+1].to_string();
+    let mut ret_str = ret.clone();
+
+    let mut t_alphabet = self.alphabet.clone();
+    let mut i = 0;
+    let len = self.separators.len();
+    let last_len = numbers.len();
+    for number in numbers.iter() {
+      let mut buffer = ret.clone();
+      buffer.push_str(&self.salt.0[..]);
+      buffer.push_str(&t_alphabet[..]);
+      t_alphabet = hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&buffer[0..t_alphabet.len()]));
+      let last = hash(*number, t_alphabet.clone());
+
+      ret_str.push_str(&last[..]);
+
+      if (i + 1) < last_len {
+        let mut v = *number % (last.as_bytes()[0] as usize + i as usize);
+        v = v % len;
+        ret_str.push(self.separators.as_bytes()[v as usize] as char);
+      }
+      i += 1;
+    }
+
+    if ret_str.len() < self.min_hash_length {
+      let guard_idx = (number_hash_int + ret_str.clone().into_bytes()[0] as usize) % self.guards.len();
+      let guard = self.guards[guard_idx..guard_idx+1].to_string();
+      let mut t = guard.clone();
+      t.push_str(&ret_str[..]);
+      ret_str = t;
+
+      if ret_str.len() < self.min_hash_length {
+        let guard_idx = (number_hash_int + ret_str.clone().into_bytes()[2] as usize) % self.guards.len();
+        ret_str.push_str(&self.guards[guard_idx..guard_idx+1]);
       }
     }
 
-    self._encode(numbers)
-  }
+    let half_len = t_alphabet.len() / 2;
+    while ret_str.len() < self.min_hash_length {
+      t_alphabet = hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(t_alphabet));
+      let mut t_ret = "".to_string();
+      t_ret.push_str(&t_alphabet[half_len..]);
+      t_ret.push_str(&ret_str[..]);
+      t_ret.push_str(&t_alphabet[0..half_len]);
+      ret_str = t_ret;
 
-  pub fn decode(&self, hash: String) -> Vec<i64> {
-    let ret : Vec<i64> = Vec::new();
-    if hash.len() == 0 {
-      return ret;
+      let excess = ret_str.len() - self.min_hash_length;
+      if excess > 0 {
+        let start_pos = excess / 2;
+        ret_str = ret_str[start_pos..start_pos + self.min_hash_length].to_string();
+      }
     }
 
-    self._decode(hash)
+    ret_str
   }
 
-  fn _decode(&self, hash: String) -> Vec<i64> {
-    let mut regexp = String::new();
-    regexp.push('[');
-    regexp.push_str(&self.guards[..]);
-    regexp.push(']');
+  pub fn decode(&self, hash: String) -> Result<Vec<usize>, Error> {
+    if hash.is_empty() {
+      return Err(Error::EmptyHash)
+    }
+    
+    let regexp = format!("[{}]", self.guards);
 
-    let re = Regex::new(&regexp[..]).unwrap();
+    let re = Regex::new(&regexp).unwrap();
     let t_hash = re.replace_all(&hash[..], " ");
 
     let split1: Vec<&str> = t_hash[..].split_whitespace().collect();
@@ -362,7 +406,7 @@ impl HashidCodec {
 
     let mut alphabet = self.alphabet.clone();
 
-    let mut ret: Vec<i64> = Vec::new();
+    let mut ret: Vec<usize> = Vec::new();
 
     for s in split2 {
       let sub_hash = s.to_string();
@@ -373,139 +417,73 @@ impl HashidCodec {
 
       let alpha_len = alphabet.len();
       alphabet = hashids_shuffle(alphabet, &HashidSalt::from(&buffer[0..alpha_len]));
-      ret.push(HashidCodec::unhash(sub_hash, alphabet.clone()));
+      ret.push(unhash(sub_hash, alphabet.clone()));
     }
 
-    let check_hash = self._encode(&ret);
+    let check_hash = self.encode_vec(&ret);
     if check_hash != hash {
-      return Vec::new();
+      return Err(Error::InvalidHash)
     }
 
-    ret
+    Ok(ret)
   }
 
-  fn index_of(input :&[u8], v: u8) -> i64 {
-    let mut i = 0;
-    for s in input.iter() {
-      if *s == v {
-        return i;
-      }
+}
 
-      i += 1;
+
+/// This trait is used to group and tag acceptable integer input: u32, u64, i32, i64.
+/// The algorithm doesn't allow negative integers and floats, 
+/// however i32 and i64 are still acccpeted and errors if negative, because Diesel returns i64 integers, 
+/// even though I've never seen a database return an negative ID.
+/// As such everytghing is processed as i64 internally.
+pub trait PositiveInteger {
+  fn to_usize(self) -> Result<usize, Error>;
+}
+
+impl PositiveInteger for u32 {
+  fn to_usize(self) -> Result<usize, Error> { Ok(self as usize) }
+}
+
+impl PositiveInteger for u64 {
+  fn to_usize(self) -> Result<usize, Error> { 
+    if self >= std::i64::MAX as u64  {
+      return Err(Error::InvalidInputId)
     }
+    Ok(self as usize) }
+}
 
-    return -1;
+impl PositiveInteger for i32 {
+  fn to_usize(self) -> Result<usize, Error> { 
+    if self <= 0  { 
+      Err(Error::InvalidInputId) 
+    } else {
+      Ok(self as usize) 
+    }
   }
+}
 
-  fn unhash(input: String, alphabet: String) -> i64 {
-    let mut number: i64 = 0;
-    let input_slice = input.as_bytes();
-    let alpha_slice = alphabet.as_bytes();
-    let len = input.len();
-    let alpha_len = alphabet.len() as i64;
-    let mut i: usize = 0;
-    loop {
-      if i >= len {
-        break;
-      }
-
-      let v = input_slice[i] as usize;
-      let pos = HashidCodec::index_of(alpha_slice, v as u8);
-      let pow_size = (len - i - 1) as u32;
-      number += (pos * alpha_len.pow(pow_size)) as i64;
-      i += 1;
+impl PositiveInteger for i64 {
+  fn to_usize(self) -> Result<usize, Error> { 
+    if self <= 0  { 
+      return Err(Error::InvalidInputId)
     }
-
-    number
-  }
-
-  fn hash(input: i64, alphabet: String) -> String {
-    let mut t_in = input;
-    let mut hash = "".to_string();
-    let len = alphabet.len() as i64;
-
-    loop {
-      let idx = (t_in % len) as usize;
-      let mut t = alphabet[idx..idx+1].to_string();
-      t.push_str(&hash[..]);
-      hash = t;
-      t_in /= len;
-
-      if t_in <= 0 {
-        break;
-      }
+    // else if self >= std::i64::MAX  {
+    //   return Err(Error::InvalidInputId)
+    // }
+    else {
+      Ok(self as usize) 
     }
-
-    hash
-  }
-
-  fn _encode(&self, numbers: &Vec<i64>) -> String {
-    let mut number_hash_int  = 0;
-    let mut count = 100;
-    for number in numbers.iter() {
-      number_hash_int += *number % count;
-      count += 1;
-    }
-
-    let idx = (number_hash_int % (self.alphabet.len() as i64)) as usize;
-    let ret = self.alphabet[idx..idx+1].to_string();
-    let mut ret_str = ret.clone();
-
-    let mut t_alphabet = self.alphabet.clone();
-    let mut i = 0;
-    let len = self.separators.len() as i64;
-    let last_len = count - 100;
-    for number in numbers.iter() {
-      let mut buffer = ret.clone();
-      buffer.push_str(&self.salt.0[..]);
-      buffer.push_str(&t_alphabet[..]);
-      t_alphabet = hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&buffer[0..t_alphabet.len()]));
-      let last = HashidCodec::hash(*number, t_alphabet.clone());
-
-      ret_str.push_str(&last[..]);
-
-      if (i + 1) < last_len {
-        let mut v = *number % (last.as_bytes()[0] as i64 + i);
-        v = v % len;
-        ret_str.push(self.separators.as_bytes()[v as usize] as char);
-      }
-      i += 1;
-    }
-
-    if ret_str.len() < self.min_hash_length {
-      let guard_idx = (number_hash_int + ret_str.clone().into_bytes()[0] as i64) as usize % self.guards.len();
-      let guard = self.guards[guard_idx..guard_idx+1].to_string();
-      let mut t = guard.clone();
-      t.push_str(&ret_str[..]);
-      ret_str = t;
-
-      if ret_str.len() < self.min_hash_length {
-        let guard_idx = (number_hash_int + ret_str.clone().into_bytes()[2] as i64) as usize % self.guards.len();
-        ret_str.push_str(&self.guards[guard_idx..guard_idx+1]);
-      }
-    }
-
-    let half_len = t_alphabet.len() / 2;
-    while ret_str.len() < self.min_hash_length {
-      t_alphabet = hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(t_alphabet));
-      let mut t_ret = "".to_string();
-      t_ret.push_str(&t_alphabet[half_len..]);
-      t_ret.push_str(&ret_str[..]);
-      t_ret.push_str(&t_alphabet[0..half_len]);
-      ret_str = t_ret;
-
-      let excess = ret_str.len() as i64 - self.min_hash_length as i64;
-      if excess > 0 {
-        let start_pos = (excess as i64 / 2) as usize;
-        ret_str = ret_str[start_pos..start_pos + self.min_hash_length].to_string();
-      }
-    }
-
-    ret_str
   }
 }
 
 
+
+
+/**
+  Following are functions that do not actually use self, so do not belong scoped inside objects.
+*/
+
+// Function used in both the HashidCode and the builder. 
 fn hashids_shuffle(alphabet: String, salt: &HashidSalt) -> String {
     
   let salt_len = salt.0.len();
@@ -549,4 +527,70 @@ fn string_to_set(string: &String) -> HashSet<char> {
   }
   
   set
+}
+
+fn unhash(input: String, alphabet: String) -> usize {
+  let mut number= 0;
+  let input_slice = input.as_bytes();
+  let alpha_slice = alphabet.as_bytes();
+  let len = input.len();
+  let alpha_len = alphabet.len();
+  let mut i: usize = 0;
+  loop {
+    if i >= len {
+      break;
+    }
+
+    let v = input_slice[i];
+    // let pos = index_of(alpha_slice, v as u8);
+    let position = alpha_slice.iter().position(|&x |x == v).unwrap_or(0);
+    //   Some(value) => value,
+    //   None => 0
+    // };
+    let pow_size = len - i - 1;
+    number += position * alpha_len.pow(pow_size as u32);
+    i += 1;
+  }
+
+  number
+}
+
+fn hash(input: usize, alphabet: String) -> String {
+  let mut t_in = input;
+  let mut hash = "".to_string();
+  let len = alphabet.len();
+
+  loop {
+    let idx = t_in % len;
+    let mut t = alphabet[idx..idx+1].to_string();
+    t.push_str(&hash[..]);
+    hash = t;
+    t_in /= len;
+
+    if t_in <= 0 {
+      break;
+    }
+  }
+
+  hash
+}
+
+// converts a String (hex) to a 
+pub fn hex_to_vec(hex: String) -> Result<Vec<i64>, Error> {
+  let regex1 = Regex::new(r"^[0-9a-fA-F]+$").unwrap();
+  if regex1.is_match(&hex.to_string()) == false {
+    return Err(Error::NonHexString)
+  };
+
+  let mut numbers: Vec<i64> = Vec::new();
+  let regex2 = Regex::new(r"[\w\W]{1,12}").unwrap();
+  for matcher in regex2.find_iter(&hex.to_string()) {
+    let mut num = String::new();
+    num.push('1');
+    num.push_str(&hex[matcher.range()]);
+    let v: i64 = i64::from_str_radix(&num.to_string(), 16).unwrap();
+    numbers.push(v);
+  }
+  
+  Ok(numbers)
 }

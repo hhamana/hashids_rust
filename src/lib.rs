@@ -1,25 +1,41 @@
-/// Create a hashid
-/// 
-/// Use the builder to configure, then use the codec to encode and decode.
+//! Obfuscate ID into Hashids, for public, polite, and less predictible identifiers.
+//! 
+//! Hashid allows short, seemingly random, ids. They are unique by using a secret salt.
+//! 
+//! Principle of this library:
+//! Use the [HashidBuilder](struct.HashidBuilder) to configure, then use the returned [codec](struct.HashidCodec) to encode and decode IDs.
+//! 
+//! Features of this crate over other crates on crates.io:
+//! - Convenient, Rust-friendly API
+//! - Lazy performance hacks to prentend it's fast
+//! - An inconsistent amount of documentation to make sure you are confused.
+//! - Returns so many Errors for your pleasure to handle 
+//! - Integration with serde and diesel, "coming soon"
 use std::collections::{HashSet};
 use regex::Regex;
 
-const ENV_KEY: &'static str =  "HASHID_SALT";
+const ENV_KEY: &'static str = "HASHID_SALT";
 const DEFAULT_ALPHABET: &'static str =  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
 const DEFAULT_MIN_LENGTH : usize = 4;
 const DEFAULT_SEPARATORS: &'static str = "cfhistuCFHISTU";
 const SEPARATOR_DIV: f32 = 3.5;
-const GUARD_DIV: u32 = 12;
+const GUARD_DIV: usize = 12;
 const MIN_ALPHABET_LENGTH: usize = 16;
 
 #[derive(Debug, PartialEq)]
 #[non_exhaustive]
-pub enum Error { 
+pub enum Error {
+  /// A unique salt must be provided when building the HashidCodec. There are two ways to do so: 
+  /// - using either or the `with_salt`, `with_string_salt`, `with_hashid_salt` API
+  /// - setting a `HASHID_SALT` environnment variable.
+  /// A salt is just a string, that has to be provided to provide a unique (compared to other packages using the same hashing algorithm)
+  /// and repeatable (it must not change, so the encoding and decoding of a string/integer yields the same result.)
   MissingSalt,
+  NonAsciiSalt,
   InvalidAlphabetLength,
-  EmptyString,
-  NonHexString,
+  NonAsciiAlphabet,
   InvalidInputId,
+  NonHexString,
   EmptyHash,
   InvalidHash
 }
@@ -33,6 +49,7 @@ pub enum Error {
 // It also doesn't need to be String, a &str is enough, as the salt is likely to be hardcoded anyway.
 // 
 /// There is no default, it will return a hashid::Error::MissingSalt if it cannot be created.
+#[derive(Debug, PartialEq)]
 pub struct HashidSalt(String);
 
 impl From<&str> for HashidSalt {
@@ -47,7 +64,7 @@ impl From<String> for HashidSalt {
   }
 }
 
-  /// Use this builder to setup the hashid encoder/decoder [hashid::HashidCodec].
+  /// Use this builder to setup the hashid encoder/decoder [HashidCodec](struct.HashidCodec.html).
   /// 
   /// There are many options to customize the encoder, and by extension, hashing settings, 
   /// but it should be most straightforward to build if you have the `HASHID_SALT` environnment variable set up.
@@ -64,10 +81,10 @@ impl From<String> for HashidSalt {
   /// ```
   /// use hashids::{HashidBuilder};
   /// let builder_result = HashidBuilder::new()
-  ///                                    .with_salt("my salt")
-  ///                                    .with_alphabet("12345789abcedef~!@#$%^&*()_+".to_string())
-  ///                                    .with_length(16)
-  ///                                    .ok();
+  ///       .with_salt("my salt")
+  ///       .with_alphabet("12345789abcedef~!@#$%^&*()_+".to_string())
+  ///       .with_length(16)
+  ///       .ok().unwrap();
   /// ```
 pub struct HashidBuilder {
   salt: Option<HashidSalt>,
@@ -127,12 +144,22 @@ impl HashidBuilder {
   
   // Alphabet-related methods
   /// Add a custom alphabet. The default alphabet is "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890".
+  /// Must be greater than 16 symbols long. 
+  /// Characters cannot be more than 1 byte length, so only ASCII characters are allowed.
+  /// ```
+  /// use hashids::{HashidBuilder, Error};
+  /// let builder = HashidBuilder::new()
+  ///     .with_salt("漢字注入注意")
+  ///     .with_alphabet("あいうえおかきくけこたちつてとさしすせそ".to_string())
+  ///     .ok();
+  /// assert_eq!(builder, Err(Error::NonAsciiAlphabet));
+  /// ```
   pub fn with_alphabet(mut self, alphabet: String) -> HashidBuilder {
-    self.alphabet = Some(alphabet);
+    self.alphabet = Some(alphabet); 
     self
   }
 
-  // length-related methods
+  /// Adjust the length of the hash string to be generated.
   pub fn with_length(mut self, length: usize) -> HashidBuilder {
     self.min_length = Some(length);
     self
@@ -150,13 +177,20 @@ impl HashidBuilder {
   pub fn ok(self) -> Result<HashidCodec, Error>  {
 
     // Get custom alphabet or default otherwise
-    let alphabet = if let Some(custom) = self.alphabet { custom } else { DEFAULT_ALPHABET.to_string() };
-    let unique_alphabet = HashidBuilder::get_unique_alphabet(alphabet);
-    if unique_alphabet.len() < MIN_ALPHABET_LENGTH {
-      return Err(Error::InvalidAlphabetLength);
+    let alphabet = {
+      match self.alphabet {
+        // Default alphabet is already manually checked to be only unique ascii chars, no need to revalidate that
+        None => DEFAULT_ALPHABET.to_string(),
+        Some(custom) => {
+          if !custom.is_ascii() { return  Err(Error::NonAsciiAlphabet ) }
+          let unique = get_unique_alphabet(custom);
+          if unique.len() < MIN_ALPHABET_LENGTH { return Err(Error::InvalidAlphabetLength) };
+          unique
+        }
+      }
     };
     // get custom salt, set from builder function or by environnment
-    let salt = if let Some(custom) = self.salt { custom } else { 
+    let salt = if let Some(custom) = self.salt { if !custom.0.is_ascii() { return  Err(Error::NonAsciiSalt ) } custom } else { 
       let by_env = std::env::var(ENV_KEY);
       match by_env {
         Ok(var) => HashidSalt::from(var),
@@ -164,10 +198,10 @@ impl HashidBuilder {
       }
     };
     
-    let min_length = if let Some(custom) = self.min_length { custom } else { DEFAULT_MIN_LENGTH };
+    let min_hash_length = if let Some(custom) = self.min_length { custom } else { DEFAULT_MIN_LENGTH };
     
-    let (t_separators, mut t_alphabet) = HashidBuilder::get_non_duplicated_string(DEFAULT_SEPARATORS.to_string(), unique_alphabet);
-    let mut shuffled_separators = hashids_shuffle(t_separators.clone(), &salt);
+    let (t_separators, mut t_alphabet) = get_non_duplicated_string(DEFAULT_SEPARATORS.to_string(), alphabet);
+    let mut shuffled_separators = hashids_shuffle(t_separators.clone(), &salt)?;
     let alphabet_len = t_alphabet.len();
     
     let shuffled_separators_len = shuffled_separators.len();
@@ -176,7 +210,7 @@ impl HashidBuilder {
       let mut seps_len =  ((alphabet_len as f32) / SEPARATOR_DIV) as usize;
       if seps_len == 1 {
         seps_len = 2;
-      }
+      };
 
       if seps_len > shuffled_separators_len {
         let diff = seps_len - shuffled_separators_len;
@@ -185,10 +219,10 @@ impl HashidBuilder {
         t_alphabet = t_alphabet[diff..].to_string();
       } else {
         shuffled_separators = shuffled_separators[..seps_len].to_string();
-      }
-    }
+      };
+    };
 
-    let mut shuffled_alphabet = hashids_shuffle(t_alphabet, &salt);
+    let mut shuffled_alphabet = hashids_shuffle(t_alphabet, &salt)?;
 
     let guard_count = (alphabet_len as f32 / GUARD_DIV as f32).ceil() as usize;
 
@@ -200,55 +234,23 @@ impl HashidBuilder {
     } else {
       t_guards = shuffled_alphabet[..guard_count].to_string();
       shuffled_alphabet = shuffled_alphabet[guard_count..].to_string();
-    }
+    };
 
     Ok(HashidCodec {
-      salt: salt,
-      min_hash_length: min_length,
+      salt,
+      min_hash_length,
       guards: t_guards,
       separators: shuffled_separators,
       alphabet: shuffled_alphabet
     })
   }
-
-  fn get_non_duplicated_string(separators: String, alphabet: String) -> (String, String) {
-    let check_separator = string_to_set(&separators);
-    let check_alphabet = string_to_set(&alphabet);
-
-    let mut modified_separators = String::new();
-    let mut modified_alphabet = String::new();
-    
-    for c in separators.chars() {
-      if check_alphabet.contains(&c) {
-        modified_separators.push(c);
-      }
-    }
-    
-    for c in alphabet.chars() {
-      if !check_separator.contains(&c) {
-        modified_alphabet.push(c);
-      }
-    }
-    
-    (modified_separators, modified_alphabet)
-  }
-
-  fn get_unique_alphabet(alphabet: String) -> String {
-    let mut unique_alphabet: String = String::new();
-    let mut check_map = HashSet::new();
-    
-    for c in alphabet.chars() {
-      // insert into a hashset gives a bool, true if it was actually inserted, false if it was already there.
-      if check_map.insert(c.clone()) {
-        // the result is then used to create the alphabet
-        unique_alphabet.push(c);
-      }
-    }
-    unique_alphabet
-  }
 }
 
-/// This struct holds the processing. It can only be created from a `HashidBuilder`;
+/// This struct manages encoding and decoding according to the validated alphabet and salt.
+///
+/// It can only be created from a `HashidBuilder`, to validate and process input values conveniently.
+/// Once created, you can use the `.encode()` and `.decode` methods.
+#[derive(Debug, PartialEq)]
 pub struct HashidCodec {
   salt: HashidSalt,
   alphabet: String,
@@ -292,13 +294,32 @@ impl HashidCodec {
   //   ret
   // }
 
-  /// Converts an ID to a Hashid String. Accepts any PositiveInteger (u32, u64, i32 and i64 are included), valid from 0 to 9007199254740992. (i64 max)
+  /// Converts an ID integer to a Hashid String.
+  ///
+  /// The integer can be any PositiveInteger (u32, u64, i32 and i64 are included), valid from 0 to 9007199254740992. (i64 max).
+  /// The trait PositiveInteger must be in scope to allow generic usage.
+  /// ```
+  /// use hashids::{HashidBuilder, PositiveInteger, HashidCodec};
+  /// let codec = HashidBuilder::new().with_salt("this is my salt").ok().unwrap();
+  /// let encoded_id = codec.encode(5i64).unwrap();
+  /// assert_eq!( encoded_id, "0rDd".to_string() );
+  ///
+  /// let negative_id = codec.encode(-2);
+  /// assert_eq!( negative_id, Err(hashids::Error::InvalidInputId) );
+  /// ```
+  ///
+  /// Why allow i64? It could be possible to erase the possibility of seeing negative numbers by just accepting usize, u32 and u64.
+  /// However, the main usage of hashid is to obfuscate DB ids, and considering the prevalent use of diesel in the Rust ecosystem, it only makes sense to allow convenient interfacing.  
+  /// Diesel converts database ids to i64. Thereforce, they are are allowed and checked to be positive at runtime.
+  ///
+  /// Why are negative numbers disallowed?  
+  /// The hashid algorithm works through indexing in the alphabet, salt, and some guards characters, and a negative would throw the indexing and calculations off.
   pub fn encode<T: PositiveInteger>(&self, id: T) -> Result<String, Error> {
     // Validate/Convert Input as a positive i64. 
     // Error depending on PositiveInteger implementation, but probably a Error::InvalidInputId
     let as_usize = id.to_usize()?;
 
-    // TODO: make it not needing to be a vec, even internally?
+    // TODO ?: make it not needing to be a vec, even internally?
     let numbers = vec![as_usize];
     let id = self.encode_vec(&numbers);
     Ok(id)
@@ -313,7 +334,7 @@ impl HashidCodec {
     for number in numbers.iter() {
       number_hash_int += number % count;
       count += 1;
-    }
+    };
 
     let idx = number_hash_int % self.alphabet.len();
     let ret = self.alphabet[idx..idx+1].to_string();
@@ -324,13 +345,11 @@ impl HashidCodec {
     let len = self.separators.len();
     let last_len = numbers.len();
     for number in numbers.iter() {
-      let mut buffer = ret.clone();
-      buffer.push_str(&self.salt.0[..]);
-      buffer.push_str(&t_alphabet[..]);
-      t_alphabet = hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&buffer[0..t_alphabet.len()]));
-      let last = hash(*number, t_alphabet.clone());
+      let buffer = format!("{}{}{}", ret, self.salt.0, t_alphabet);
+      t_alphabet = hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(&buffer[0..t_alphabet.len()])).unwrap();
+      let last = hash(*number, &t_alphabet);
 
-      ret_str.push_str(&last[..]);
+      ret_str.push_str(&last);
 
       if (i + 1) < last_len {
         let mut v = *number % (last.as_bytes()[0] as usize + i as usize);
@@ -338,24 +357,24 @@ impl HashidCodec {
         ret_str.push(self.separators.as_bytes()[v as usize] as char);
       }
       i += 1;
-    }
+    };
 
     if ret_str.len() < self.min_hash_length {
       let guard_idx = (number_hash_int + ret_str.clone().into_bytes()[0] as usize) % self.guards.len();
       let guard = self.guards[guard_idx..guard_idx+1].to_string();
-      let mut t = guard.clone();
-      t.push_str(&ret_str[..]);
-      ret_str = t;
+      // let mut t = guard.clone();
+      // t.push_str(&ret_str);
+      ret_str = format!("{}{}", guard, ret_str);
 
       if ret_str.len() < self.min_hash_length {
         let guard_idx = (number_hash_int + ret_str.clone().into_bytes()[2] as usize) % self.guards.len();
         ret_str.push_str(&self.guards[guard_idx..guard_idx+1]);
       }
-    }
+    };
 
     let half_len = t_alphabet.len() / 2;
     while ret_str.len() < self.min_hash_length {
-      t_alphabet = hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(t_alphabet));
+      t_alphabet = hashids_shuffle(t_alphabet.clone(), &HashidSalt::from(t_alphabet)).unwrap();
       let mut t_ret = "".to_string();
       t_ret.push_str(&t_alphabet[half_len..]);
       t_ret.push_str(&ret_str[..]);
@@ -367,7 +386,7 @@ impl HashidCodec {
         let start_pos = excess / 2;
         ret_str = ret_str[start_pos..start_pos + self.min_hash_length].to_string();
       }
-    }
+    };
 
     ret_str
   }
@@ -378,11 +397,10 @@ impl HashidCodec {
     }
     
     let regexp = format!("[{}]", self.guards);
-
     let re = Regex::new(&regexp).unwrap();
-    let t_hash = re.replace_all(&hash[..], " ");
+    let t_hash = re.replace_all(&hash, " ");
+    let split1: Vec<&str> = t_hash.split_whitespace().collect();
 
-    let split1: Vec<&str> = t_hash[..].split_whitespace().collect();
     let mut i = 0;
 
     let len = split1.len();
@@ -394,36 +412,26 @@ impl HashidCodec {
     let lottery = hash_breakdown[0..1].to_string();
     hash_breakdown = hash_breakdown[1..].to_string();
 
-    let mut regexp2 = String::new();
-    regexp2.push('[');
-    regexp2.push_str(&self.separators[..]);
-    regexp2.push(']');
-
-    let re2 = Regex::new(&regexp2[..]).unwrap();
+    let regexp2 = format!("[{}]", self.separators);
+    let re2 = Regex::new(&regexp2).unwrap();
     hash_breakdown = re2.replace_all(&hash_breakdown, " ").to_string();
-
-    let split2: Vec<&str> = hash_breakdown[..].split_whitespace().collect();
+    let split2: Vec<&str> = hash_breakdown.split_whitespace().collect();
 
     let mut alphabet = self.alphabet.clone();
-
     let mut ret: Vec<usize> = Vec::new();
 
     for s in split2 {
-      let sub_hash = s.to_string();
-      let mut buffer = String::new();
-      buffer.push_str(&lottery[..]);
-      buffer.push_str(&self.salt.0[..]);
-      buffer.push_str(&alphabet.clone()[..]);
+      let buffer = format!("{}{}{}", lottery, self.salt.0, alphabet);
 
       let alpha_len = alphabet.len();
-      alphabet = hashids_shuffle(alphabet, &HashidSalt::from(&buffer[0..alpha_len]));
-      ret.push(unhash(sub_hash, alphabet.clone()));
-    }
+      alphabet = hashids_shuffle(alphabet, &HashidSalt::from(&buffer[0..alpha_len]))?;
+      ret.push(unhash(s.to_string(), &alphabet));
+    };
 
     let check_hash = self.encode_vec(&ret);
     if check_hash != hash {
       return Err(Error::InvalidHash)
-    }
+    };
 
     Ok(ret)
   }
@@ -432,10 +440,11 @@ impl HashidCodec {
 
 
 /// This trait is used to group and tag acceptable integer input: u32, u64, i32, i64.
+///
 /// The algorithm doesn't allow negative integers and floats, 
 /// however i32 and i64 are still acccpeted and errors if negative, because Diesel returns i64 integers, 
 /// even though I've never seen a database return an negative ID.
-/// As such everytghing is processed as i64 internally.
+/// Converts to usize internally.
 pub trait PositiveInteger {
   fn to_usize(self) -> Result<usize, Error>;
 }
@@ -453,8 +462,8 @@ impl PositiveInteger for u64 {
 }
 
 impl PositiveInteger for i32 {
-  fn to_usize(self) -> Result<usize, Error> { 
-    if self <= 0  { 
+  fn to_usize(self) -> Result<usize, Error> {
+    if self <= 0  {
       Err(Error::InvalidInputId) 
     } else {
       Ok(self as usize) 
@@ -463,8 +472,8 @@ impl PositiveInteger for i32 {
 }
 
 impl PositiveInteger for i64 {
-  fn to_usize(self) -> Result<usize, Error> { 
-    if self <= 0  { 
+  fn to_usize(self) -> Result<usize, Error> {
+    if self <= 0  {
       return Err(Error::InvalidInputId)
     }
     // else if self >= std::i64::MAX  {
@@ -477,120 +486,172 @@ impl PositiveInteger for i64 {
 }
 
 
-
-
 /**
   Following are functions that do not actually use self, so do not belong scoped inside objects.
+  They are not public, so API change is fine. Seperating them also greatly facilitates unit testing.
 */
 
+/// Filters separqtors out of the alphabet, and alphabet out of separators
+fn get_non_duplicated_string(separators: String, alphabet: String) -> (String, String) {
+  let check_separator: HashSet<char> = separators.chars().collect();
+  let check_alphabet: HashSet<char> = alphabet.chars().collect();
+
+  let mut modified_separators = String::new();
+  let mut modified_alphabet = String::new();
+  
+  for c in separators.chars() {
+    if check_alphabet.contains(&c) {
+      modified_separators.push(c);
+    }
+  };
+  
+  for c in alphabet.chars() {
+    if !check_separator.contains(&c) {
+      modified_alphabet.push(c);
+    }
+  };
+
+  (modified_separators, modified_alphabet)
+}
+
+
+fn get_unique_alphabet(alphabet: String) -> String {
+  let mut unique_alphabet: String = String::new();
+  let mut check_map = HashSet::new();
+  
+  for c in alphabet.chars() {
+    // insert into a hashset gives a bool, true if it was actually inserted, false if it was already there.
+    if check_map.insert(c.clone()) {
+      // the result is then used to create the alphabet
+      unique_alphabet.push(c);
+    }
+  };
+  unique_alphabet
+}
+
 // Function used in both the HashidCode and the builder. 
-fn hashids_shuffle(alphabet: String, salt: &HashidSalt) -> String {
+fn hashids_shuffle(alphabet: String, salt: &HashidSalt) -> Result<String, Error> {
     
   let salt_len = salt.0.len();
   if salt_len <= 0 {
-    return alphabet;
+    return Err(Error::MissingSalt)
+  };
+  if alphabet.len() <= 0 {
+    return Err(Error::InvalidAlphabetLength)
   }
 
-  let arr = salt.0.as_bytes();
+  let salt_arr: Vec<char> = salt.0.chars().collect();
   let len = alphabet.len();
-  let mut bytes = alphabet.into_bytes();
-  let shuffle = &mut bytes[..];
-
-  let mut i: usize = len-1;
+  let mut i: usize = len - 1;
   let mut v: usize = 0;
   let mut p: usize = 0;
 
+  let shuffle = &mut alphabet.into_bytes();
   while i > 0 {
     v %= salt_len;
-    let t = arr[v] as usize;
+    let t = salt_arr[v] as usize;
     p += t;
     let j = (t + v + p) % i;
 
     shuffle.swap(i,j);
 
-    i=i-1;
-    v=v+1; 
+    i -= 1;
+    v += 1; 
   }
 
-  let mut shuffled_alphabet = String::with_capacity(len);
-  for i in 0..len {
-    shuffled_alphabet.push(shuffle[i] as char);
-  }
-
-  shuffled_alphabet
+  // convert the shuffle [u8] back to String and return that
+  let res : String = shuffle.iter().map(|i| *i as char).collect();
+  Ok(res)
 }
 
-fn string_to_set(string: &String) -> HashSet<char> {
-  let mut set = HashSet::new();
-  for c in string.chars() {
-    set.insert(c.clone());
-  }
-  
-  set
-}
-
-fn unhash(input: String, alphabet: String) -> usize {
+fn unhash(input: String, alphabet: &String) -> usize {
   let mut number= 0;
   let input_slice = input.as_bytes();
   let alpha_slice = alphabet.as_bytes();
-  let len = input.len();
+  let len = input.len() -1;
   let alpha_len = alphabet.len();
-  let mut i: usize = 0;
-  loop {
-    if i >= len {
-      break;
-    }
 
-    let v = input_slice[i];
-    // let pos = index_of(alpha_slice, v as u8);
-    let position = alpha_slice.iter().position(|&x |x == v).unwrap_or(0);
-    //   Some(value) => value,
-    //   None => 0
-    // };
-    let pow_size = len - i - 1;
+  for (i, v) in input_slice.iter().enumerate() {
+    let position = alpha_slice.iter().position(|x| x == v).unwrap_or(0);
+    let pow_size = len - i;
     number += position * alpha_len.pow(pow_size as u32);
-    i += 1;
-  }
+  };
 
   number
 }
 
-fn hash(input: usize, alphabet: String) -> String {
-  let mut t_in = input;
+fn hash(mut input: usize, alphabet: &str) -> String {
   let mut hash = "".to_string();
   let len = alphabet.len();
 
+  let mut idx = input % len;
   loop {
-    let idx = t_in % len;
-    let mut t = alphabet[idx..idx+1].to_string();
-    t.push_str(&hash[..]);
-    hash = t;
-    t_in /= len;
-
-    if t_in <= 0 {
+    hash = format!("{}{}", alphabet[idx..idx+1].to_string(), hash);
+    input /= len;
+    if input <= 0 {
       break;
     }
-  }
-
+    idx = input % len;
+  };
   hash
 }
 
-// converts a String (hex) to a 
-pub fn hex_to_vec(hex: String) -> Result<Vec<i64>, Error> {
-  let regex1 = Regex::new(r"^[0-9a-fA-F]+$").unwrap();
-  if regex1.is_match(&hex.to_string()) == false {
-    return Err(Error::NonHexString)
-  };
+/// converts a HEX String to a vector of integers;
+fn hex_to_vec(hex: String) -> Result<Vec<usize>, Error> {
+  // check the string is valid HEX
+  let _ = i64::from_str_radix(&hex, 16).map_err(|_| Error::NonHexString)?;
 
-  let mut numbers: Vec<i64> = Vec::new();
-  let regex2 = Regex::new(r"[\w\W]{1,12}").unwrap();
-  for matcher in regex2.find_iter(&hex.to_string()) {
-    let mut num = String::new();
-    num.push('1');
-    num.push_str(&hex[matcher.range()]);
-    let v: i64 = i64::from_str_radix(&num.to_string(), 16).unwrap();
+  let mut numbers = Vec::new();
+  // iterate chars by group of 12, guard div
+  let regex = Regex::new(r"[\w\W]{1,12}").unwrap();
+  for matcher in regex.find_iter(&hex) {
+    let num = format!("1{}", matcher.as_str());
+    let v = usize::from_str_radix(&num.to_string(), 16).map_err(|_| Error::NonHexString)?;
     numbers.push(v);
   }
   
   Ok(numbers)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  
+  #[test]
+  fn decode_hex_string() {
+    let hex = "123456789abcdef".to_string();
+    let result = hex_to_vec(hex);
+    assert_eq!(result, Ok(vec![301490975054524, 7663]));
+  }
+
+  #[test]
+  fn decode_non_hex_string_error() {
+    let data = "4g".to_string();
+    let result = hex_to_vec(data);
+    assert_eq!(result, Err(Error::NonHexString));
+  }
+
+  #[test]
+  fn valid_hash() {
+    let mut data = 500;
+    let result = hash(data, &DEFAULT_ALPHABET.to_string());
+    assert_eq!(result, "ie");
+    data = 12546843121;
+    let result = hash(data, &DEFAULT_ALPHABET.to_string());
+    assert_eq!(result, "nRhrdB");
+  }
+
+  #[test]
+  fn invalid_hash() {
+    let data = 0;
+    let result = hash(data, &DEFAULT_ALPHABET.to_string());
+    assert_eq!(result, "a");
+  }
+
+  #[test]
+  fn hash_shuffle() {
+    let shuffled = hashids_shuffle("anything really goes".to_string(), &HashidSalt::from("this is my salt"));
+    assert_eq!(shuffled, Ok(" eagnrlityas oelygnh".to_string()));
+
+  }
 }

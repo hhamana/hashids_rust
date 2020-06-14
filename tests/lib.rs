@@ -29,7 +29,7 @@ fn decoding_from_different_salt_gives_error() {
   assert_eq!(longs, Err(Error::InvalidHash));
 }
 
-#[test]
+// #[test]
 // fn multiple_integers_to_single_hash() {
 //   // I don't know what this could even be used for. But my lack of understanding should not remove a feature.
 //   let ids = HashidBuilder::new().with_salt("this is my salt").ok().unwrap();
@@ -41,15 +41,13 @@ fn decoding_from_different_salt_gives_error() {
 // }
 
 #[test]
-#[should_panic]
-fn negative_integers_panics() {
-  // This should be made into a proper error. Poor API design again.
-  let ids = HashidBuilder::new().with_salt("this is my salt").ok().unwrap();
+fn negative_integers_errors() {
+  let codec = HashidBuilder::new().with_salt("this is my salt").ok().unwrap();
 
   let numbers = -94108;
-  let encode = ids.encode(numbers).unwrap();
+  let encode = codec.encode(numbers);
+  assert_eq!(encode, Err(Error::InvalidInputId));
 
-  assert_eq!(encode, "aBMswoO2UB3Sj");
 }
 
 #[test]
@@ -62,6 +60,7 @@ fn with_custom_length() {
   let encode = ids.encode(numbers).unwrap();
 
   assert_eq!(encode, "gB0NV05e");
+  assert_eq!(encode.len(), 8);
 }
 
 #[test]
@@ -76,6 +75,20 @@ fn with_custom_alphabet() {
   
   assert_eq!(encode, "xez268x");
 }
+
+// #[test]
+// fn with_nonascii_alphabet() {
+//   let ids = HashidBuilder::new()
+//                         .with_salt("漢字注入注意")
+//                         .with_alphabet("あいうえおかきくけこたちつてとさしすせそ".to_string())
+//                         .ok();
+                        
+//   assert_eq!(ids, Err(Error::NonAsciiAlphabet));
+//   // let numbers = 1234567;
+//   // let encode = ids.encode(numbers).unwrap();
+  
+// }
+
 #[test]
 fn invalid_alphabet_fails() {
   let builder = HashidBuilder::new().with_salt("this is my salt")
@@ -153,12 +166,14 @@ fn encode_successive_ints() {
   let encode_4 = ids.encode(numbers_4).unwrap();
   let numbers_5 = 5;
   let encode_5 = ids.encode(numbers_5).unwrap();
+  let encode_1again = ids.encode(numbers_1).unwrap();
 
   assert_eq!(encode_1, "NV");
   assert_eq!(encode_2, "6m");
   assert_eq!(encode_3, "yD");
   assert_eq!(encode_4, "2l");
   assert_eq!(encode_5, "rD");
+  assert_eq!(encode_1again, "NV");
 }
 
 #[test]
@@ -175,4 +190,16 @@ fn decode_successive_ints() {
   assert_eq!(decoded_1, vec![1]);
   let decoded_2 = ids.decode(encode_2).unwrap();
   assert_eq!(decoded_2, vec![2]);
+}
+
+#[test]
+fn decode_string_out_of_alphabet() {
+  let ids = HashidBuilder::new().with_salt("this is my salt").with_alphabet("ABCDEFGHIJKabcdefghijk".to_string()).ok().unwrap();
+
+  let numbers_1 = 1;
+  let encode_1 = ids.encode(numbers_1).unwrap();
+  assert_eq!(encode_1, "dDKk");
+  let decoded_string = "dDzK".to_string();
+  let decoded_1 = ids.decode(decoded_string);
+  assert_eq!(decoded_1, Err(Error::InvalidHash));
 }
